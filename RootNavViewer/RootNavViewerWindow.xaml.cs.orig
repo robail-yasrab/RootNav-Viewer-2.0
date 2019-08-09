@@ -1,0 +1,1127 @@
+﻿using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.IO;
+using System.Linq;
+using System.Runtime.Serialization.Formatters.Binary;
+using System.Text;
+using System.Windows;
+using System.Windows.Data;
+using System.Windows.Documents;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using MySql.Data.MySqlClient;
+using System.Reflection;
+using System.Data;
+
+using RootNav.Measurement;
+using RootNav.Data;
+
+namespace RootNav.Viewer
+{
+    
+    /// <summary>
+    /// Interaction logic for RootNavViewerWindow.xaml
+    /// </summary>
+    public partial class RootNavViewerWindow : Window
+    {
+        public static readonly DependencyProperty ConnectedProperty =
+            DependencyProperty.Register("Connected", typeof(bool), typeof(RootNavViewerWindow), new PropertyMetadata(false));
+
+        public bool Connected
+        {
+            get
+            {
+                return (bool)GetValue(ConnectedProperty);
+            }
+            set
+            {
+                SetValue(ConnectedProperty, value);
+            }
+        }
+
+        public static readonly DependencyProperty ImageProperty =
+          DependencyProperty.Register("Image", typeof(ImageSource), typeof(RootNavViewerWindow), new PropertyMetadata(null));
+
+        public ImageSource Image
+        {
+            get
+            {
+                return (ImageSource)GetValue(ImageProperty);
+            }
+            set
+            {
+                SetValue(ImageProperty, value);
+            }
+        }
+
+        List<MeasurementHandler> handlers;
+
+        private List<string> plantTags = null;
+        private List<string> unfilteredPlantTags = null;
+
+        public List<string> PlantTags
+        {
+            get { return plantTags; }
+            set { plantTags = value; }
+        }
+
+        private int currentPlantIndex = 0;
+        private List<PlantInfo> currentPlants = new List<PlantInfo>();
+
+        public RootNavViewerWindow()
+        {
+            InitializeComponent();
+
+            try
+            {
+                this.handlers = PluginLoader.GetPlugins<MeasurementHandler>(Directory.GetCurrentDirectory());
+
+                foreach (MeasurementHandler handler in this.handlers)
+                {
+                    if (handler.Measures == MeasurementType.Plant)
+                    {
+                        this.plantListBox.Items.Add(handler);
+                    }
+                    else
+                    {
+                        this.rootListBox.Items.Add(handler);
+                    }
+                }
+
+                rootReader = new MySQLRootReader();
+                rootReader.Initialise();
+
+                // Background worker to use database connection
+                BackgroundWorker bw = new BackgroundWorker() { WorkerReportsProgress = false };
+                bw.DoWork += ConnectWorkerDoWork;
+                bw.RunWorkerCompleted += ConnectWorkerCompleted;
+                bw.RunWorkerAsync();
+            }
+            catch (Exception e)
+            {
+                MessageBox.Show("Exception caught:" + e.Message);
+            }
+        }
+
+        void ConnectWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
+        {
+            if (e.Result != null)
+            {
+                object[] results = (object[])e.Result;
+                this.plantTags = (List<string>)results[0];
+                this.currentPlants = (List<PlantInfo>)results[1];
+                this.Image = (RenderTargetBitmap)results[2];
+
+                this.rootCountTextBlock.Text = string.Format("{0:n0}", this.plantTags.Count) + " architectures found in database";
+                this.rootInformationPanel.IsEnabled = true;
+                this.traitsPanel.IsEnabled = true;
+                this.statusText.Text = "Status: Connected to database";
+                UpdateRootTags();
+                this.Connected = true;
+            }
+        }
+
+        public void UpdateRootTags()
+        {
+            if (this.currentPlants == null || currentPlants.Count == 0)
+            {
+                this.rootImageTagTextBlock.Text = "";
+                this.RootNumberLabel.Content = "";
+            }
+            else
+            {
+                this.traitsTagTextblock.Text = currentPlants.First().Tag;
+                this.traitsDateTextbox.Text = currentPlants.First().Stamp.Date.ToString("d");
+
+                this.traitsPlantCountTextbox.Text = currentPlants.Count.ToString();
+
+                this.rootImageTagTextBlock.Text = string.Format("Current Root: {0}", currentPlants.First().Tag);
+                this.RootNumberLabel.Content = string.Format("{0}/{1}", currentPlantIndex + 1, plantTags.Count);
+            }
+        }
+
+        void ConnectWorkerDoWork(object sender, DoWorkEventArgs e)
+        {
+            List<string> tags = null;
+            ImageSource img = null;
+            List<PlantInfo> currentPlants = null;
+            
+            // TESTING
+            //rootReader = new RmlRootReader();
+            //rootReader.Initialise();
+            // TESTING
+
+            if (rootReader.Connected)
+            {
+                tags = rootReader.ReadAllTags();
+
+                if (tags.Count > 0)
+                {
+                    currentPlants = rootReader.ReadPlantInfo(tags[currentPlantIndex]);
+                    
+                    if (currentPlants != null)
+                    {
+                        Point sourceposition;
+                        img = CreatePlantImage(currentPlants, out sourceposition);
+                    }
+                }
+
+                e.Result = new object[] { tags, currentPlants, img };
+            }
+        }
+
+        private IRootReader rootReader;
+
+        private ImageSource CreatePlantImage(List<PlantInfo> plants, out Point sourcePosition)
+        {
+            sourcePosition = default(Point);
+
+            Pen p = new Pen(Brushes.Black, 6.0);
+            p.StartLineCap = PenLineCap.Round;
+            p.EndLineCap = PenLineCap.Round;
+
+            Dictionary<String, RootInfo> plantComponents = new Dictionary<string, RootInfo>();
+
+            foreach (PlantInfo plant in plants)
+            {
+                foreach (RootInfo root in plant)
+                {
+                    // Start of first primary is the plant source
+                    if (root.RelativeID == "1.1")
+                    {
+                        sourcePosition = new Point(root.Spline.Start.X, root.Spline.Start.Y);
+                    }
+                    plantComponents.Add(root.RelativeID, root);
+                }
+            }
+
+            // Find global plant bounding box
+            double left = double.MaxValue, right = double.MinValue, top = double.MaxValue, bottom = double.MinValue;
+
+            foreach (var kvp in plantComponents)
+            {
+                SampledSpline spline = kvp.Value.Spline as SampledSpline;
+                if (spline == null)
+                {
+                    continue;
+                }
+
+                Rect r = spline.BoundingBox;
+
+                if (r.Left < left)
+                {
+                    left = r.Left;
+                }
+
+                if (r.Right > right)
+                {
+                    right = r.Right;
+                }
+
+                if (r.Top < top)
+                {
+                    top = r.Top;
+                }
+
+                if (r.Bottom > bottom)
+                {
+                    bottom = r.Bottom;
+                }
+            }
+
+            int width = (int)right - (int)left + 8;
+            int height = (int)bottom - (int)top + 8;
+
+            RenderTargetBitmap rtb = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
+
+            DrawingVisual drawingVisual = new DrawingVisual();
+            DrawingContext drawingContext = drawingVisual.RenderOpen();
+
+            drawingContext.DrawRectangle(Brushes.White, null, new Rect(0, 0, width, height));
+
+            // Draw splines
+            StreamGeometry geometry = new StreamGeometry();
+
+            using (StreamGeometryContext sgc = geometry.Open())
+            {
+                foreach (var kvp in plantComponents)
+                {
+                    SampledSpline spline = kvp.Value.Spline as SampledSpline;
+                    if (spline != null)
+                    {
+                        Point[] points = spline.SampledPoints;
+
+                        // Optional line from start position on parent
+
+                        RootInfo parent = plantComponents.ContainsKey(kvp.Key.Substring(0, kvp.Key.LastIndexOf("."))) ? plantComponents[kvp.Key.Substring(0, kvp.Key.LastIndexOf("."))] : null;
+
+                        if (parent != null)
+                        {
+                            Point start = parent.Spline.GetPoint(kvp.Value.StartReference);
+                            sgc.BeginFigure(new Point(start.X - left + 4, start.Y - top + 4), false, false);
+                            sgc.LineTo(new Point(points[0].X - left + 4, points[0].Y - top + 4), true, true);
+                        }
+                        else
+                        {
+                            sgc.BeginFigure(new Point(points[0].X - left + 4, points[0].Y - top + 4), false, false);
+                        }
+
+                        for (int i = 1; i < points.Length; i++)
+                        {
+                            sgc.LineTo(new Point(points[i].X - left + 4, points[i].Y - top + 4), true, true);
+                        }
+                    }
+                }
+            }
+
+            if (geometry.CanFreeze)
+            {
+                geometry.Freeze();
+            }
+            drawingContext.DrawGeometry(null, p, geometry);
+
+            sourcePosition.X = sourcePosition.X - left + 4;
+            sourcePosition.Y = sourcePosition.Y - top + 4;
+
+            drawingContext.Close();
+
+            rtb.Render(drawingVisual);
+
+            if (rtb.CanFreeze)
+            {
+                rtb.Freeze();
+            }
+
+
+            return rtb;
+        }
+
+        private void LeftNavClick(object sender, RoutedEventArgs e)
+        {
+            if (this.plantTags.Count == 0)
+            {
+                return;
+            }
+
+            this.currentPlantIndex = Math.Max(currentPlantIndex - 1, 0);
+            BackgroundWorker bw = new BackgroundWorker();
+            bw.DoWork += PlantIndexChangedDoWork;
+            bw.RunWorkerCompleted += PlantIndexChangedWorkerCompleted;
+            bw.RunWorkerAsync();
+        }
+
+        private void RightNavClick(object sender, RoutedEventArgs e)
+        {
+            if (this.plantTags.Count == 0)
+            {
+                return;
+            }
+
+            this.currentPlantIndex = Math.Min(currentPlantIndex + 1, this.plantTags.Count - 1);
+            BackgroundWorker bw = new BackgroundWorker();
+            bw.DoWork += PlantIndexChangedDoWork;
+            bw.RunWorkerCompleted += PlantIndexChangedWorkerCompleted;
+            bw.RunWorkerAsync();
+        }
+
+        void PlantIndexChangedDoWork(object sender, DoWorkEventArgs e)
+        {
+            List<PlantInfo> currentPlants = null;
+            ImageSource img = null;
+            String tag = plantTags[currentPlantIndex];
+
+            if (plantTags.Count > 0)
+            {
+                currentPlants = rootReader.ReadPlantInfo(tag);
+
+                if (currentPlants != null)
+                {
+                    Point sourcePosition;
+                    img = CreatePlantImage(currentPlants, out sourcePosition);
+                }
+            }
+
+            e.Result = new object[] { currentPlants, img };
+        }
+
+        void PlantIndexChangedWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
+        {
+            if (e.Result != null)
+            {
+                object[] results = (object[])e.Result;
+                this.currentPlants = (List<PlantInfo>)results[0];
+                this.Image = (RenderTargetBitmap)results[1];
+                UpdateRootTags();
+            }
+        }
+
+        private void FilterButton_Click(object sender, RoutedEventArgs e)
+        {
+            // Backup unfiltered tags if required
+            if (unfilteredPlantTags == null)
+            {
+                unfilteredPlantTags = plantTags;
+            }
+
+            BackgroundWorker bw = new BackgroundWorker() { WorkerReportsProgress = false };
+            bw.DoWork += SearchWorkerDoWork;
+            bw.RunWorkerCompleted += SearchWorkerCompleted;
+
+            String[] searchTerms = this.SearchBox.Text.Split(' ');
+            List<object> parameterList = new List<object>();
+
+            parameterList.Add(searchTerms);
+            parameterList.Add((bool)this.AnyRadioButton.IsChecked);
+
+            DateTime? dt = null;
+            DateTime parsedDateTime;
+            if (DateTime.TryParse(this.DateBox.Text, out parsedDateTime))
+            {
+                dt = parsedDateTime;
+            }
+
+            parameterList.Add(dt);
+
+            bw.RunWorkerAsync(parameterList);
+        }
+
+        void SearchWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
+        {
+            object[] results = (object[])e.Result;
+
+            // Set plant tags to be new tags, or failing that, an empty list
+            plantTags = results[0] as List<string> != null ? results[0] as List<string> : new List<string>();
+
+            if (this.plantTags.Count > 0)
+            {
+                currentPlantIndex = 0;
+                this.currentPlants = rootReader.ReadPlantInfo(this.plantTags[currentPlantIndex]);
+                Point source;
+
+                this.Image = CreatePlantImage(this.currentPlants, out source);
+
+                this.rootCountTextBlock.Text = string.Format("{0:n0}", this.plantTags.Count) + " plants found in search";
+                UpdateRootTags();
+                this.rootInformationPanel.IsEnabled = true;
+                this.traitsPanel.IsEnabled = true;
+            }
+            else
+            {
+                this.rootCountTextBlock.Text = "No plants found in search";
+                UpdateRootTags();
+                this.rootInformationPanel.IsEnabled = false;
+                this.traitsPanel.IsEnabled = false;
+            }
+
+            this.ClearBorder.Visibility = System.Windows.Visibility.Visible;
+
+
+        }
+
+        void SearchWorkerDoWork(object sender, DoWorkEventArgs e)
+        {
+            List<object> args = e.Argument as List<object>;
+
+            if (args == null)
+            {
+                e.Result = null;
+                return;
+            }
+
+            List<string> tags = rootReader.FilterTags((String[])args[0], (bool)args[1], (DateTime?)args[2]);;
+
+            e.Result = new object[] { tags };
+        }
+
+        private void ClearBorder_Click(object sender, RoutedEventArgs e)
+        {
+            ImageSource img = null;
+            currentPlants = null;
+
+            this.plantTags = unfilteredPlantTags;
+
+            if (this.plantTags.Count > 0)
+            {
+                currentPlantIndex = 0;
+                currentPlants = rootReader.ReadPlantInfo(this.plantTags[currentPlantIndex]);
+
+                if (currentPlants != null)
+                {
+                    Point sourcePosition;
+                    img = CreatePlantImage(currentPlants, out sourcePosition);
+                }
+            }
+
+            this.Image = img;
+
+            if (this.plantTags.Count > 0)
+            {
+                this.rootCountTextBlock.Text = string.Format("{0:n0}", this.plantTags.Count) + " architectures found in database";
+                UpdateRootTags();
+
+                currentPlantIndex = 0;
+                this.currentPlants = rootReader.ReadPlantInfo(this.plantTags[currentPlantIndex]);
+
+                this.rootCountTextBlock.Text = string.Format("{0:n0}", this.plantTags.Count) + " plants found in search";
+                UpdateRootTags();
+                this.rootInformationPanel.IsEnabled = true;
+                this.traitsPanel.IsEnabled = true;
+
+            }
+            else
+            {
+                this.rootCountTextBlock.Text = "No plants found in database";
+                UpdateRootTags();
+                this.rootInformationPanel.IsEnabled = false;
+                this.traitsPanel.IsEnabled = false;
+            }
+
+            this.ClearBorder.Visibility = System.Windows.Visibility.Hidden;
+        }
+
+        private void Measure_Click(object sender, RoutedEventArgs e)
+        {
+            System.Windows.Forms.FolderBrowserDialog d = new System.Windows.Forms.FolderBrowserDialog();
+
+            // Separate the list of handlers into those that output single values and 2D data
+            List<MeasurementHandler> singleHandlers = new List<MeasurementHandler>();
+            List<MeasurementHandler> matrixHandlers = new List<MeasurementHandler>();
+
+            foreach (MeasurementHandler handler in this.plantListBox.SelectedItems)
+            {
+                if (handler.ReturnsSingleItem)
+                {
+                    singleHandlers.Add(handler);
+                }
+                else
+                {
+                    matrixHandlers.Add(handler);
+                }
+            }
+
+            foreach (MeasurementHandler handler in this.rootListBox.SelectedItems)
+            {
+                if (handler.ReturnsSingleItem)
+                {
+                    singleHandlers.Add(handler);
+                }
+                else
+                {
+                    matrixHandlers.Add(handler);
+                }
+            }
+
+            // Single handlers
+            if (singleHandlers.Count > 0)
+            {
+                IDataOutputHandler singleOutputPlants = null;
+                IDataOutputHandler singleOutputRoots = null;
+
+                bool handlesPlants = false, handlesRoots = false;
+
+                foreach (MeasurementHandler handler in singleHandlers)
+                {
+                    handlesPlants = handlesPlants || handler.Measures == MeasurementType.Plant;
+                    handlesRoots = handlesRoots || handler.Measures == MeasurementType.Root;
+                }
+
+                if ((bool)this.TabularCheckbox.IsChecked)
+                {
+                    if (handlesPlants)
+                    {
+                        singleOutputPlants = new MeasurementWindow() { Title = "Plant Measurements" };
+                    }
+
+                    if (handlesRoots)
+                    {
+                        singleOutputRoots = new MeasurementWindow() { Title = "Root Measurements" };
+                    }
+                }
+                else
+                {
+                    if (handlesPlants)
+                    {
+                        singleOutputPlants = new CSVMeasurementWriter();
+                    }
+
+                    if (handlesRoots)
+                    {
+                        singleOutputRoots = new CSVMeasurementWriter();
+                    }
+                }
+
+                // Measure each plant, and if necessary each root
+                foreach (String tag in this.plantTags)
+                {
+                    List<PlantInfo> currentPlants = rootReader.ReadPlantInfo(tag);
+                    int plantID = 1;
+
+                    foreach (PlantInfo currentPlant in currentPlants)
+                    {
+                        if (handlesPlants)
+                        {
+                            Dictionary<String, String> measurements = new Dictionary<string, string>();
+
+                            // First column, plant IDs.
+                            if (currentPlants.Count > 1)
+                            {
+                                measurements.Add("Tag", "\"" + currentPlant.Tag + ":" + plantID.ToString() + "\"");
+                                plantID++;
+                            }
+                            else
+                            {
+                                measurements.Add("Tag", "\"" + currentPlant.Tag + "\"");
+                            }
+
+                            foreach (MeasurementHandler handler in singleHandlers)
+                            {
+                                if (handler.Measures == MeasurementType.Plant)
+                                {
+                                    measurements.Add(handler.Name, handler.MeasurePlant(currentPlant).ToString());
+                                }
+                            }
+
+                            if ((bool)completedArchitecturesCheckbox.IsChecked)
+                            {
+                                measurements.Add("Complete", currentPlant.Complete ? "Yes" : "No");
+                            }
+
+                            singleOutputPlants.Add(measurements);
+                        }
+
+                        if (handlesRoots)
+                        {
+                            foreach (RootInfo root in currentPlant)
+                            {
+                                Dictionary<String, String> measurements = new Dictionary<string, string>();
+
+                                // First column, plant ID + relativeID.
+                                measurements.Add("Tag", "\"" + currentPlant.Tag + ":" + root.RelativeID + "\"");
+
+                                foreach (MeasurementHandler handler in singleHandlers)
+                                {
+                                    if (handler.Measures == MeasurementType.Root)
+                                    {
+                                        measurements.Add(handler.Name, handler.MeasureRoot(root, currentPlant.GetParent(root)).ToString());
+                                    }
+                                }
+
+                                if ((bool)completedArchitecturesCheckbox.IsChecked)
+                                {
+                                    measurements.Add("Complete", currentPlant.Complete ? "Yes" : "No");
+                                }
+
+                                singleOutputRoots.Add(measurements);
+                            }
+                        }
+
+
+                    }
+                }
+
+                if ((bool)this.TabularCheckbox.IsChecked)
+                {
+                    if (handlesPlants)
+                    {
+                        MeasurementWindow plantWindow = singleOutputPlants as MeasurementWindow;
+                        if (plantWindow != null)
+                        {
+                            plantWindow.Show();
+                        }
+                    }
+                    if (handlesRoots)
+                    {
+                        MeasurementWindow rootWindow = singleOutputRoots as MeasurementWindow;
+                        rootWindow.Show();
+                    }
+                }
+                else
+                {
+                    CSVMeasurementWriter plantWriter = singleOutputPlants as CSVMeasurementWriter;
+                    CSVMeasurementWriter rootWriter = singleOutputRoots as CSVMeasurementWriter;
+
+                    System.Windows.Forms.DialogResult result = d.ShowDialog();
+
+
+                    if (result == System.Windows.Forms.DialogResult.OK)
+                    {
+                        String folder = d.SelectedPath;
+
+                        if (plantWriter != null)
+                        {
+                            plantWriter.Write(folder + "\\Plant measurements.txt");
+                        }
+
+                        if (rootWriter != null)
+                        {
+                            rootWriter.Write(folder + "\\Root measurements.txt");
+                        }
+                    }
+                }
+            }
+
+            if (matrixHandlers.Count > 0)
+            {
+
+                // Unlike single output, each 2D handler will output to a separate table.
+                foreach (MeasurementHandler handler in matrixHandlers)
+                {
+                    List<List<object>> measurements = new List<List<object>>();
+
+                    if (handler.Measures == MeasurementType.Plant)
+                    {
+                        foreach (String tag in this.plantTags)
+                        {
+                            List<PlantInfo> currentPlants = rootReader.ReadPlantInfo(tag);
+                            int plantID = 1;
+
+                            foreach (PlantInfo plant in currentPlants)
+                            {
+                                if (measurements.Count == 0)
+                                {
+                                    // For the first plant, begin measurement lists
+                                    List<List<object>> currentData = (List<List<object>>)handler.MeasurePlant(plant);
+
+                                    // Independent axis
+                                    measurements.Add(currentData[0]);
+
+                                    // Rename dependent axis depending on tag
+                                    currentData[1][0] = plant.Tag + ":" + plantID.ToString();
+                                    measurements.Add(currentData[1]);
+
+                                    // Rename Measurement column to plant tag
+                                    plantID++;
+                                }
+                                else
+                                {
+                                    // For subsequent plants, add only data, not independent axis
+                                    List<List<object>> currentData = (List<List<object>>)handler.MeasurePlant(plant);
+                                    
+                                    currentData[1][0] = plant.Tag + ":" + plantID.ToString();
+                                    plantID++;
+
+                                    // Merge tables
+                                    measurements.Add(currentData[1]);
+                                }
+                            }
+                        }
+
+                    }
+                    else if (handler.Measures == MeasurementType.Root)
+                    {
+                        foreach (String tag in this.plantTags)
+                        {
+                            List<PlantInfo> currentPlants = rootReader.ReadPlantInfo(tag);
+
+                            foreach (PlantInfo plant in currentPlants)
+                            {
+                                foreach (RootInfo root in plant)
+                                {
+                                    if (measurements.Count == 0)
+                                    {
+
+                                        // For the first plant, begin measurement lists
+                                        List<List<object>> currentData = (List<List<object>>)handler.MeasureRoot(root);
+
+                                        // Independent axis
+                                        measurements.Add(currentData[0]);
+
+                                        // Rename dependent axis depending on tag
+                                        currentData[1][0] = plant.Tag + ":" + root.RelativeID;
+                                        measurements.Add(currentData[1]);
+                                    }
+                                    else
+                                    {
+                                        // For subsequent plants, add only data, not independent axis
+                                        List<List<object>> currentData = (List<List<object>>)handler.MeasureRoot(root);
+
+                                        currentData[1][0] = plant.Tag + ":" + root.RelativeID;
+                                        measurements.Add(currentData[1]);
+                                    }
+                                }
+                            }
+                        }
+
+                    }
+
+                    // Current output format (List of lists of objects) is inefficient. REconstruct as arrays.
+
+                    List<object[]> arrayStageOne = new List<object[]>();
+                    int max = int.MinValue;
+                    foreach (List<object> lst in measurements)
+                    {
+                            arrayStageOne.Add(lst.ToArray());
+                            
+                        if (lst.Count > max)
+                        {
+                            max = lst.Count;
+                        }
+                    }
+
+                    object[][] outputArray = arrayStageOne.ToArray();
+
+                    // Matrix data is output using this code, rather than the CSVMeasurementWriter
+                    StringBuilder sb = new StringBuilder();
+                  
+                    for (int row = 0; row < max; row++)
+                    {
+                        List<string> rowValues = new List<string>();
+                        for (int col = 0; col < outputArray.Length; col++)
+                        {
+                            if (outputArray[col].Length > row)
+                            {
+                                rowValues.Add("\"" + outputArray[col][row].ToString() + "\"");
+                            }
+                            else
+                            {
+                                rowValues.Add("");
+                            }
+                        }
+                        sb.AppendLine(string.Join(",", rowValues));
+                    }
+
+                    if (d.SelectedPath == "")
+                    {
+                        System.Windows.Forms.DialogResult result = d.ShowDialog();
+
+                        if (result == System.Windows.Forms.DialogResult.OK)
+                        {
+                            File.WriteAllText(d.SelectedPath + "\\" + handler.Name + ".txt", sb.ToString());
+                        }
+                        else
+                        {
+                            continue;
+                        }
+                    }
+                    else
+                    {
+                        File.WriteAllText(d.SelectedPath + "\\" + handler.Name + ".txt", sb.ToString());
+                    }
+                }
+            }
+
+        }
+
+        private void ExportButton_Click(object sender, RoutedEventArgs e)
+        {
+            System.Windows.Forms.FolderBrowserDialog d = new System.Windows.Forms.FolderBrowserDialog();
+            String file = Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + "\\exportdata.txt";
+            if (d.SelectedPath == "")
+            {
+                System.Windows.Forms.DialogResult result = d.ShowDialog();
+
+                if (result == System.Windows.Forms.DialogResult.OK)
+                {
+                    file = d.SelectedPath + "\\exportdata.txt";
+                }
+                else
+                {
+                    return;
+                }
+            }
+            else
+            {
+                file = d.SelectedPath + "\\exportdata.txt";
+            }
+
+            Dictionary<String, List<Point>> splinePoints = new Dictionary<string, List<Point>>();
+            StreamWriter strm = new StreamWriter(file, false);
+                
+            foreach (String tag in this.plantTags)
+            {
+                List<PlantInfo> currentPlants = rootReader.ReadPlantInfo(tag);
+
+                foreach (PlantInfo currentPlant in currentPlants)
+                {
+                    foreach (RootInfo root in currentPlant)
+                    {
+                        if (root.Spline != null)
+                        {
+                            StringBuilder currentLine = new StringBuilder();
+                            currentLine.AppendFormat("{0} {1}:", currentPlant.Tag, root.RelativeID);
+                                
+                            for (int i = 0; i < root.Spline.SampledPoints.Length; i++)
+                            {
+                                if (i < root.Spline.SampledPoints.Length - 1)
+                                {
+                                    currentLine.AppendFormat("{0},{1} ", Math.Round(root.Spline.SampledPoints[i].X, 2), Math.Round(root.Spline.SampledPoints[i].Y, 2));
+                                }
+                                else
+                                {
+                                    currentLine.AppendFormat("{0},{1}", Math.Round(root.Spline.SampledPoints[i].X, 2), Math.Round(root.Spline.SampledPoints[i].Y, 2));
+                                }
+                            }
+
+                            strm.WriteLine(currentLine.ToString());
+                        }
+                    }
+                }
+            }
+
+            strm.Close();
+        }
+
+        unsafe private void ImageButton_Click(object sender, RoutedEventArgs e)
+        {
+            int option = CustomQueryBox.Show("Image Output", "Which type of image would you like to output?", "Combined Image", "Separate Images");
+
+            System.Windows.Forms.FolderBrowserDialog d;
+            String path;
+            System.Windows.Forms.DialogResult result;
+
+            switch (option)
+            {
+                case 1: // Combined image
+                    d = new System.Windows.Forms.FolderBrowserDialog();
+                    result = d.ShowDialog();
+
+                    if (result == System.Windows.Forms.DialogResult.OK)
+                    {
+                        path = d.SelectedPath;
+                    }
+                    else
+                    {
+                        return;
+                    }
+
+                    int left = int.MaxValue, top = int.MaxValue, right = int.MinValue, bottom = int.MinValue;
+                    AccumulatorGrid grid = new AccumulatorGrid();
+
+                    DateTime dt = DateTime.Now;
+
+                    for (int i = 0; i < this.plantTags.Count; i++)
+                    {
+                        String tag = this.plantTags[i];
+
+                        try
+                        {
+                            List<PlantInfo> currentPlants = rootReader.ReadPlantInfo(tag);
+
+                            Point sourcePosition;
+
+                            // Create image and convert to writeablebitmap
+                            WriteableBitmap img = new WriteableBitmap(CreatePlantImage(currentPlants, out sourcePosition) as RenderTargetBitmap);
+
+                            // Map all pixels relative to source at (0,0)
+                            Point offset = new Point(-sourcePosition.X, -sourcePosition.Y);
+
+                            int width = img.PixelWidth;
+                            uint* backBufferPtr = (uint*)img.BackBuffer.ToPointer();
+                            int stride = img.BackBufferStride / 4;
+
+                            for (int y = 0; y < img.PixelHeight; y++)
+                            {
+                                for (int x = 0; x < width; x++)
+                                {
+                                    
+                                    uint grayLevel = 255 - ((*(backBufferPtr + y * width + x) & 0x00FF0000) >> 16);
+
+                                    // Root location
+                                    if (grayLevel > 0)
+                                    {
+                                        // Adjust bounding box
+                                        int posX = x + (int)offset.X;
+                                        int posY = y + (int)offset.Y;
+
+                                        if (posX < left)
+                                        {
+                                            left = posX;
+                                        }
+
+                                        if (posY < top)
+                                        {
+                                            top = posY;
+                                        }
+
+                                        if (posX > right)
+                                        {
+                                            right = posX;
+                                        }
+
+                                        if (posY > bottom)
+                                        {
+                                            bottom = posY;
+                                        }
+
+                                        // Add to heat list
+                                        grid.Accumulate(posX, posY, grayLevel);
+                                    }
+                                }
+                            }
+                        }
+                        catch (OutOfMemoryException)
+                        {
+                            GC.Collect();
+                            GC.WaitForPendingFinalizers();
+                            i--;
+                        }
+                    }
+
+                    // Adjust bounding box back to 0,0
+                    int finalOffsetX = -left;
+                    int finalOffsetY = -top;
+                    int finalWidth = (right - left);
+                    int finalHeight = (bottom - top);
+
+                    // Scale value
+                    double heatMax = grid.Max;
+
+                    WriteableBitmap heatImage = new WriteableBitmap(finalWidth, finalHeight, 96.0, 96.0, PixelFormats.Gray16, null);
+                    heatImage.Lock();
+
+                    ushort* ptr = (ushort*)heatImage.BackBuffer.ToPointer();
+                    int grayStride = heatImage.BackBufferStride / 2;
+
+                    for (int y = 0; y < finalHeight; y++)
+                    {
+                        for (int x = 0; x < finalWidth; x++)
+                        {
+                            double heat = grid[x - (int)finalOffsetX, y - (int)finalOffsetY];
+                            ushort intensity = (ushort)((heat / heatMax) * ushort.MaxValue);
+                            *(ptr + (y * grayStride + x)) = intensity;
+                        }
+                    }
+
+                    heatImage.AddDirtyRect(new Int32Rect(0, 0, finalWidth, finalHeight));
+                    heatImage.Unlock();
+
+
+                    RootNav.Data.ImageEncoder.SaveImage(path + "\\heatMap.png", heatImage, RootNav.Data.ImageEncoder.EncodingType.PNG);
+
+                    TimeSpan ts = DateTime.Now - dt;
+
+                    break;
+                case 2: // Single images
+                    d = new System.Windows.Forms.FolderBrowserDialog();
+                    result = d.ShowDialog();
+
+                    if (result == System.Windows.Forms.DialogResult.OK)
+                    {
+                        path = d.SelectedPath;
+                    }
+                    else
+                    {
+                        return;
+                    }
+
+                    for (int i = 0; i < this.plantTags.Count; i++)
+                    {
+                        String tag = this.plantTags[i];
+
+                        try
+                        {
+                            List<PlantInfo> currentPlants = rootReader.ReadPlantInfo(tag);
+                            
+                            Point sourcePosition;
+
+                            RenderTargetBitmap img = CreatePlantImage(currentPlants, out sourcePosition) as RenderTargetBitmap;
+
+                            string file = path + "\\" + tag + ".png";
+
+                            if (img != null)
+                            {
+                                RootNav.Data.ImageEncoder.SaveImage(file, new WriteableBitmap(img), RootNav.Data.ImageEncoder.EncodingType.PNG);
+                            }
+
+                            StreamWriter strm = new StreamWriter(path + "\\" + tag + ".txt", false);
+                            strm.Write("Position: {0},{1}", sourcePosition.X, sourcePosition.Y);
+                            strm.Close();
+                        }
+                        catch (OutOfMemoryException)
+                        {
+                            GC.Collect();
+                            GC.WaitForPendingFinalizers();
+                            i--;
+                        }
+                    }
+                    break;
+                default:
+                    return;
+            }
+
+        }
+    }
+        
+
+    [ValueConversion(typeof(bool), typeof(Visibility))]
+    public class NotVisibilityConverter : DependencyObject, IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture)
+        {
+            return (bool)value ? Visibility.Hidden : Visibility.Visible;
+        }
+
+        public object ConvertBack(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture)
+        {
+            return false;
+        }
+    }
+
+    [ValueConversion(typeof(bool), typeof(Visibility))]
+    public class VisibilityConverter : DependencyObject, IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture)
+        {
+            return (bool)value ? Visibility.Visible : Visibility.Hidden;
+        }
+
+        public object ConvertBack(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture)
+        {
+            return false;
+        }
+    }
+
+    public class CountConverter : IMultiValueConverter
+    {
+        public object Convert(object[] values, Type targetType, object parameter,
+            System.Globalization.CultureInfo culture)
+        {
+            return (int)values[0] > 0 || (int)values[1] > 0 ? false : true;
+        }
+
+        public object[] ConvertBack(object value, Type[] targetTypes, object parameter,
+            System.Globalization.CultureInfo culture)
+        {
+            throw new NotImplementedException();
+        }
+    }
+
+    [ValueConversion(typeof(bool), typeof(Brush))]
+    public class EllipseBrushConverter : DependencyObject, IValueConverter
+    {
+        RadialGradientBrush red;
+        RadialGradientBrush green;
+
+        public EllipseBrushConverter()
+        {
+            red = new RadialGradientBrush();
+            red.RadiusX = 0.5;
+            red.RadiusY = 0.5;
+            red.Center = new Point(0.5, 0.5);
+            red.GradientOrigin = new Point(0.5, 0.25);
+            red.GradientStops.Add(new GradientStop((Color)ColorConverter.ConvertFromString("#FFFFAAAA"), 0.0));
+            red.GradientStops.Add(new GradientStop((Color)ColorConverter.ConvertFromString("Red"), 1.0));
+
+            green = new RadialGradientBrush();
+            green.RadiusX = 0.5;
+            green.RadiusY = 0.5;
+            green.Center = new Point(0.5, 0.5);
+            green.GradientOrigin = new Point(0.5, 0.25);
+            green.GradientStops.Add(new GradientStop((Color)ColorConverter.ConvertFromString("#FFAAFFAA"), 0.0));
+            green.GradientStops.Add(new GradientStop((Color)ColorConverter.ConvertFromString("Green"), 1.0));
+
+        }
+
+        public object Convert(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture)
+        {
+            return (bool)value ? green : red;
+        }
+
+        public object ConvertBack(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture)
+        {
+            return false;
+        }
+    }
+
+}

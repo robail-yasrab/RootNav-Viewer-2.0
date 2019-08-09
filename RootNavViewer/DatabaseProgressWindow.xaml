@@ -1,0 +1,21 @@
+﻿<Window x:Class="RootNav.Viewer.DatabaseProgressWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Database Integrity" ResizeMode="NoResize" WindowStartupLocation="CenterScreen" WindowStyle="ToolWindow" SizeToContent="WidthAndHeight">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="28" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <Label Name="progressLabel" Margin="3,0" VerticalContentAlignment="Center" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Grid.Row="0" Content="" />
+        
+        <Grid Grid.Row="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <ProgressBar Grid.Row="0" Name="progressBar" Height="24" Width="200" Margin="6 0 6 6" Minimum="0" Maximum="100" />
+            <Button Grid.Row="1" Name="cancelButton" Width="80" Height="24" Margin="6 0 6 6" Content="Cancel" Click="cancelButton_Click"/>
+        </Grid>
+    </Grid>
+</Window>

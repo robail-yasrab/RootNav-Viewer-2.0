@@ -1,0 +1,89 @@
+﻿<Window x:Class="RootNav.Data.DataSourceWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="DataSourceWindow" Height="134.034" Width="441">
+    <Grid HorizontalAlignment="Stretch">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" HorizontalAlignment="Stretch" Margin="0,-3,0,0">
+            <GroupBox Margin="3 0 3 0" Grid.Row="1"  VerticalAlignment="Top" HorizontalAlignment="Stretch" Header="Connection Details" BorderBrush="DarkGray" Grid.RowSpan="2">
+                <Grid Margin="3 0 3 0" VerticalAlignment="Top" HorizontalAlignment="Stretch">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="70" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Label IsEnabled="True" Height="20" Name="directoryLabel" Padding="0" Content="Directory" VerticalContentAlignment="Center" Width="73" Grid.Row="7" Grid.Column="0" />
+
+                    <Grid Grid.Column="1" Grid.Row="7" HorizontalAlignment="Stretch">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="30" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox IsEnabled="True" Grid.Column="0" Height="24" Name="directoryBox" HorizontalAlignment="Stretch" VerticalAlignment="Center" Margin="0,3" />
+                        <Button Name="findDirectoryButton" IsEnabled="True" Grid.Column="1" Margin="3,3,0,3" Content="..." Click="findDirectoryButton_Click"/>
+                    </Grid>
+
+                </Grid>
+            </GroupBox>
+
+        </Grid>
+
+        <Grid Grid.Row="1" Margin=" 1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="120" />
+                <ColumnDefinition Width="80"/>
+                <ColumnDefinition Width="80"/>
+            </Grid.ColumnDefinitions>
+
+            <Border Name="notConnectedBorder" Grid.Column="0" Margin="3" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                Background="#FFFFFF" BorderBrush="#FF888888" BorderThickness="1" CornerRadius="3">
+                <Label Name="notConnectedLabel" Foreground="Black" VerticalAlignment="Stretch" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"></Label>
+            </Border>
+
+            <Border Name="connectedBorder" Visibility="Hidden" Grid.Column="0" Margin="3" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                Background="#FF44DD44" BorderBrush="#FF008800" BorderThickness="1" CornerRadius="3">
+                <Label Name="connectedLabel" Foreground="Black" VerticalAlignment="Stretch" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" VerticalContentAlignment="Center">Success</Label>
+            </Border>
+
+            <Border Name="failedConnectionBorder" Visibility="Hidden" Grid.Column="0" Margin="3" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                Background="#FFFF4444" BorderBrush="#FF880000" BorderThickness="1" CornerRadius="3">
+                <Label Name="failedConnectionLabel" Foreground="Black" VerticalAlignment="Stretch" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" VerticalContentAlignment="Center">Failed</Label>
+            </Border>
+
+            <Border Name="connectingBorder" Visibility="Hidden" Grid.Column="0" Margin="3" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                 BorderBrush="#FF008800" BorderThickness="1" CornerRadius="3">
+                <Border.Triggers>
+                    <EventTrigger RoutedEvent="Border.Loaded">
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="stop1" Storyboard.TargetProperty="Offset" From="-0.4" To="1" RepeatBehavior="Forever"/>
+                                <DoubleAnimation Storyboard.TargetName="stop2" Storyboard.TargetProperty="Offset" From="-0.2" To="1.2" RepeatBehavior="Forever"/>
+                                <DoubleAnimation Storyboard.TargetName="stop3" Storyboard.TargetProperty="Offset" From="0" To="1.4" RepeatBehavior="Forever"/>
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </EventTrigger>
+                </Border.Triggers>
+
+                <Border.Background>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                        <GradientStop x:Name="stop1" Offset="-0.2" Color="Transparent"/>
+                        <GradientStop x:Name="stop2" Offset="0" Color="#FF33FF33"/>
+                        <GradientStop x:Name="stop3" Offset="0.2" Color="Transparent"/>
+                    </LinearGradientBrush>
+                </Border.Background>
+                <Label Name="connectingLabel" Foreground="Black" VerticalAlignment="Stretch" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" VerticalContentAlignment="Center">Connecting</Label>
+            </Border>
+
+            <Button Grid.Column="1" Content="Test Connection" Name="testButton" Margin="3" HorizontalAlignment="Stretch" Click="testButton_Click" />
+            <Button Grid.Column="2" Content="Accept" Name="acceptButton" Margin="3" HorizontalAlignment="Stretch" Click="acceptButton_Click" />
+            <Button Grid.Column="3" Content="Cancel" Name="cancelButton" Margin="3" HorizontalAlignment="Stretch" Click="cancelButton_Click" />
+        </Grid>
+
+        
+       
+    </Grid>
+</Window>

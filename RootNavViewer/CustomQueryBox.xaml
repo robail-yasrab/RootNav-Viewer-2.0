@@ -1,0 +1,18 @@
+﻿<Window x:Class="RootNav.Viewer.CustomQueryBox"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="CustomQueryBox" Height="Auto" Width="300" SizeToContent="Height" ResizeMode="NoResize">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition/>
+            <RowDefinition/>
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition/>
+            <ColumnDefinition/>
+        </Grid.ColumnDefinitions>
+        <TextBlock Name="contentBlock" Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2" TextWrapping="Wrap" Margin="6">This is a default message option, would you like to select option one, or option two?</TextBlock>
+        <Button Grid.Row="1" Grid.Column="0" Height="40" HorizontalAlignment="Stretch" Margin="6 3 3 6" Name="Option1" Click="Option_Click">Option One</Button>
+        <Button Grid.Row="1" Grid.Column="1" Height="40" HorizontalAlignment="Stretch" Margin="3 3 6 6" Name="Option2" Click="Option_Click">Option Two</Button>
+    </Grid>
+</Window>
