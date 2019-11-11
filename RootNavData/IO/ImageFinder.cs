@@ -33,7 +33,7 @@ namespace RootNav.Data.IO
 
     public static class ImageFinder
     {
-        static HashSet<string> ValidImageExtensions = new HashSet<string> { ".jpg", ".jpeg", ".tif", ".tiff", ".png" };
+        static HashSet<string> ValidImageExtensions = new HashSet<string> { ".jpg", ".jpeg", ".tif", ".tiff", ".png", ".bmp" };
         public static ImageCollection ImageSearch(string path, string tag)
         {
             ImageCollection output = new ImageCollection();

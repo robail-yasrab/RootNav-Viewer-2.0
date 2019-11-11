@@ -289,11 +289,11 @@ namespace RootNav.Viewer
 
             sourcePosition = default(Point);
 
-            Pen pPri = new Pen(foregroundPri, 12.0);
+            Pen pPri = new Pen(foregroundPri, 8.0);
             pPri.StartLineCap = PenLineCap.Round;
             pPri.EndLineCap = PenLineCap.Round;
 
-            Pen pLat = new Pen(foregroundLat, 12.0);
+            Pen pLat = new Pen(foregroundLat, 8.0);
             pLat.StartLineCap = PenLineCap.Round;
             pLat.EndLineCap = PenLineCap.Round;
 
